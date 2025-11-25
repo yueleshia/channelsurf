@@ -24,6 +24,9 @@ func (cache *RingBuffer) Query_channel(channel string) {
 				//fmt.Println(err)
 				L_DEBUG.Println(err)
 				// @TODO: display error
+				live = Video {
+					Channel: channel,
+				}
 			} else {
 				L_DEBUG.Printf("%q is live\n", channel)
 				live = x

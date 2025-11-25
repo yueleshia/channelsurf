@@ -8,7 +8,7 @@ import (
 
 	"github.com/rivo/uniseg"
 
-	"github.com/yueleshia/tuiwitch/src"
+	"github.com/yueleshia/streamsurf/src"
 )
 
 const (
@@ -35,7 +35,6 @@ func (self *UIState) Load_follow_list(config string, cache *src.RingBuffer) {
 	for _, x := range list {
 		s, _ := strings.CutSuffix(x, "\r")
 		if "" != s {
-			cache.Latest[s] = src.Video{}
 			list[idx] = s
 			idx += 1
 		}
@@ -46,6 +45,35 @@ func (self *UIState) Load_follow_list(config string, cache *src.RingBuffer) {
 	src.Assert(idx * src.PAGE_SIZE <= src.RING_QUEUE_SIZE)
 
 	self.Channel_list = list[:idx]
+	self.Follow_videos = make([]src.Video, idx)
+	for i, channel := range list[:idx] {
+		blank := src.Video{
+			Channel: channel,
+			Title: "Pending...",
+		}
+		self.Follow_videos[i] = blank
+		cache.Latest[channel] = blank
+	}
+}
+
+func Sort_videos_by_latest(a, b src.Video) int {
+	less_than := false
+	if a.Is_live && b.Is_live {
+		// Shortest live first
+		less_than = a.Duration < b.Duration
+	} else if a.Is_live || b.Is_live {
+		less_than = a.Is_live // Live first, vod after
+	} else {
+		a_close := a.Start_time.Add(a.Duration)
+		b_close := b.Start_time.Add(b.Duration)
+		// Latest close time first
+		less_than = a_close.After(b_close)
+	}
+	if less_than {
+		return -1
+	} else {
+		return 0
+	}
 }
 
 func Print_formatted_line(output io.Writer, gap string, video src.Video) {
@@ -54,21 +82,25 @@ func Print_formatted_line(output io.Writer, gap string, video src.Video) {
 	var s_ago, duration string
 	t_ago := time.Now().Sub(video.Start_time)
 
-	if video.Is_live {
-		s_ago = "○"
-		duration = fmt.Sprintf("%dh%02dm", int(t_ago.Hours()), int(t_ago.Minutes()) % 60)
+	if video.Start_time == (time.Time{}) {
 	} else {
-		// @NOTE twitch streams are capped at 48 hours
-		if int(t_ago.Minutes()) < 100 {
-			s_ago = fmt.Sprintf("%d min ago", int(t_ago.Minutes()))
-		} else if int(t_ago.Hours()) < 72 {
-			s_ago = fmt.Sprintf("%d hr ago", int(t_ago.Hours()))
+		if video.Is_live {
+			s_ago = "○"
+			duration = fmt.Sprintf("%dh%02dm", int(t_ago.Hours()), int(t_ago.Minutes()) % 60)
 		} else {
-			s_ago = fmt.Sprintf("%d d ago", int(t_ago.Hours() / 24))
-		}
+			// @NOTE twitch streams are capped at 48 hours
+			if int(t_ago.Minutes()) < 100 {
+				s_ago = fmt.Sprintf("%d min ago", int(t_ago.Minutes()))
+			} else if int(t_ago.Hours()) < 72 {
+				s_ago = fmt.Sprintf("%d hr ago", int(t_ago.Hours()))
+			} else {
+				s_ago = fmt.Sprintf("%d d ago", int(t_ago.Hours() / 24))
+			}
 
-		duration = fmt.Sprintf("%dh%02dm", int(video.Duration.Hours()), int(video.Duration.Minutes()) % 60)
+			duration = fmt.Sprintf("%dh%02dm", int(video.Duration.Hours()), int(video.Duration.Minutes()) % 60)
+		}
 	}
+
 	print_line(output, gap, sizes, []string{video.Channel, video.Title, s_ago, duration})
 }
 func print_line(output io.Writer, gap string, sizes []int, cols []string) error {

@@ -1,4 +1,4 @@
-module github.com/yueleshia/tuiwitch
+module github.com/yueleshia/streamsurf
 
 go 1.24.0
 

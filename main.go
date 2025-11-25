@@ -13,8 +13,8 @@ import (
 	//"time"
 	"os"
 
-	"github.com/yueleshia/tuiwitch/src"
-	"github.com/yueleshia/tuiwitch/src/tui"
+	"github.com/yueleshia/streamsurf/src"
+	"github.com/yueleshia/streamsurf/src/tui"
 )
 
 func help() {
@@ -22,9 +22,9 @@ func help() {
 Possible options:
 USAGE: (Use first character or full word)
 
-tuiwitch follow                    - list online status of various channels
-tuiwitch open <channel> [<offset>] - see latest vods
-tuiwitch vods <channel> [<offset>] - see latest vods
+streamsurf follow                    - list online status of various channels
+streamsurf open <channel> [<offset>] - see latest vods
+streamsurf vods <channel> [<offset>] - see latest vods
 `)
 }
 
@@ -65,7 +65,6 @@ func main() {
 	}
 
 	UI.Load_follow_list(CHANNELS, &CACHE)
-	UI.Follow_videos = make([]src.Video, len(UI.Channel_list))
 
 	switch cmd {
 	case "interactive":
@@ -115,26 +114,7 @@ func main() {
 			UI.Follow_videos[idx] = vid
 			idx += 1
 		}
-
-		slices.SortFunc(UI.Follow_videos, func(a, b src.Video) int {
-			less_than := false
-			if a.Is_live && b.Is_live {
-				// Shortest live first
-				less_than = a.Duration < b.Duration
-			} else if a.Is_live || b.Is_live {
-				less_than = a.Is_live // Live first, vod after
-			} else {
-				a_close := a.Start_time.Add(a.Duration)
-				b_close := b.Start_time.Add(b.Duration)
-				// Latest close time first
-				less_than = a_close.After(b_close)
-			}
-			if less_than {
-				return -1
-			} else {
-				return 0
-			}
-		})
+		slices.SortFunc(UI.Follow_videos, tui.Sort_videos_by_latest)
 
 		choice, err := basic_menu(
 			"Follow list\n",
