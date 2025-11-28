@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,8 +34,6 @@ var CHANNELS string
 
 //run: go run % f
 
-var STDIN_FD int
-
 var CACHE = src.RingBuffer {
 	// You typically want 70% fullness for hash maps
 	// Although we wrap around (so we could add up to 2 * RING_QUEUE_SIZE)
@@ -47,7 +46,10 @@ var UI = tui.UIState{}
 
 // Plumbing (low-level) and porcelain (user-facing) are GIT developer terminology
 func main() {
-	src.Set_log_level(src.DEBUG)
+	pprof.StartCPUProfile(src.Must(os.Create("cpu.pprof")))
+	defer pprof.StopCPUProfile()
+
+	src.Set_log_level(os.Stderr, src.DEBUG)
 
 	{
 		list := make([]string, len(os.Args[1:]))
@@ -68,9 +70,9 @@ func main() {
 
 	switch cmd {
 	case "interactive":
-		STDIN_FD = int(os.Stdin.Fd())
-		//interactive()
-		
+		src.Set_log_level(io.Discard, src.DEBUG)
+		UI.Interactive(&CACHE)
+
 	case "o": fallthrough
 	case "open":
 		// @TODO: test behaviour on VOD

@@ -103,11 +103,11 @@ const (
 	PANIC
 )
 
-func Set_log_level(log_level uint) {
-	if log_level <= TRACE { L_TRACE = log.New(os.Stderr, "", log.Lshortfile) }
-	if log_level <= DEBUG { L_DEBUG = log.New(os.Stderr, "", log.Lshortfile) }
-	if log_level <= INFO { L_INFO = log.New(os.Stderr, "", 0) }
-	if log_level <= ERROR { L_ERROR = log.New(os.Stderr, "", log.Lshortfile) }
+func Set_log_level(writer io.Writer, log_level uint) {
+	if log_level <= TRACE { L_TRACE = log.New(writer, "", log.Lshortfile) }
+	if log_level <= DEBUG { L_DEBUG = log.New(writer, "", log.Lshortfile) }
+	if log_level <= INFO { L_INFO = log.New(writer, "", 0) }
+	if log_level <= ERROR { L_ERROR = log.New(writer, "", log.Lshortfile) }
 }
 
 
