@@ -34,14 +34,6 @@ var CHANNELS string
 
 //run: go run % f
 
-var CACHE = src.RingBuffer {
-	// You typically want 70% fullness for hash maps
-	// Although we wrap around (so we could add up to 2 * RING_QUEUE_SIZE)
-	// before deleting elements, we typically typically are only adding vidoes
-	// 10 at a time, so 1.3 * BUFFER_SIZE would be enough
-	Latest: make(map[string]src.Video, src.RING_QUEUE_SIZE * 2),
-	Buffer: make([]src.Video, src.RING_QUEUE_SIZE),
-}
 var UI = tui.UIState{}
 
 // Plumbing (low-level) and porcelain (user-facing) are GIT developer terminology
@@ -66,12 +58,12 @@ func main() {
 		cmd = os.Args[1]
 	}
 
-	UI.Load_follow_list(CHANNELS, &CACHE)
+	UI.Load_config(CHANNELS)
 
 	switch cmd {
 	case "interactive":
 		src.Set_log_level(io.Discard, src.DEBUG)
-		UI.Interactive(&CACHE)
+		UI.Interactive(&UI.Cache)
 
 	case "o": fallthrough
 	case "open":
@@ -100,15 +92,15 @@ func main() {
 				if videos, err := x.Val, x.Err; err != nil {
 					fmt.Fprintln(os.Stderr, err.Error())
 				} else {
-					CACHE.Add(videos)
+					UI.Cache.Add(videos)
 				}
 			}
 		}
 
 		cur := src.Video{}
-		buffer_length := len(CACHE.Buffer)
-		for i := CACHE.Start; i < CACHE.Close; i += 1 {
-			vid := CACHE.Buffer[i % buffer_length]
+		buffer_length := len(UI.Cache.Buffer)
+		for i := UI.Cache.Start; i < UI.Cache.Close; i += 1 {
+			vid := UI.Cache.Buffer[i % buffer_length]
 			if vid.Start_time.After(cur.Start_time) {
 				cur = vid
 			}
@@ -139,13 +131,13 @@ func main() {
 				if videos, err := x.Val, x.Err; err != nil {
 					fmt.Fprintln(os.Stderr, err.Error())
 				} else {
-					CACHE.Add(videos)
+					UI.Cache.Add(videos)
 				}
 			}
 		}
 
 		idx := 0
-		for _, vid := range CACHE.Latest {
+		for _, vid := range UI.Cache.Latest {
 			UI.Follow_videos[idx] = vid
 			idx += 1
 		}
@@ -186,19 +178,19 @@ func main() {
 				if videos, err := x.Val, x.Err; err != nil {
 					fmt.Fprintln(os.Stderr, err.Error())
 				} else {
-					CACHE.Add(videos)
+					UI.Cache.Add(videos)
 				}
 			}
 		}
-		slices.SortFunc(CACHE.Buffer[CACHE.Start:CACHE.Close], tui.Sort_videos_by_latest)
+		slices.SortFunc(UI.Cache.Buffer[UI.Cache.Start:UI.Cache.Close], tui.Sort_videos_by_latest)
 
-		buffer_length := len(CACHE.Buffer)
+		buffer_length := len(UI.Cache.Buffer)
 		choice, err := basic_menu(
 			fmt.Sprintf("VODs for %s\n", channel),
-			CACHE.Close - CACHE.Start,
+			UI.Cache.Close - UI.Cache.Start,
 			"Enter a Video: ",
 			func (out io.Writer, idx int) {
-				vid := CACHE.Buffer[(CACHE.Close - idx - 1) % buffer_length]
+				vid := UI.Cache.Buffer[(UI.Cache.Close - idx - 1) % buffer_length]
 				tui.Print_formatted_line(out, " | ", vid)
 			},
 		)
@@ -207,13 +199,13 @@ func main() {
 			return
 		}
 
-		vid := CACHE.Buffer[(CACHE.Close - choice - 1) % buffer_length]
+		vid := UI.Cache.Buffer[(UI.Cache.Close - choice - 1) % buffer_length]
 		play(vid)
 
 		//var list strings.Builder
-		//buffer_length := len(CACHE.Buffer)
-		//for i := CACHE.Start; i < CACHE.Close; i += 1 {
-		//	vid := CACHE.Buffer[i % buffer_length]
+		//buffer_length := len(UI.Cache.Buffer)
+		//for i := UI.Cache.Start; i < UI.Cache.Close; i += 1 {
+		//	vid := UI.Cache.Buffer[i % buffer_length]
 		//	tui.Print_formatted_line(&list, " | ", vid)
 		//}
 

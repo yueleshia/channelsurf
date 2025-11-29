@@ -13,6 +13,7 @@ import (
 
 const (
 	ScreenFollow int = iota
+	ScreenChannel
 )
 
 type UIState struct {
@@ -20,40 +21,70 @@ type UIState struct {
 	Screen int
 	Channel_list []string
 
-	// Follow
+	Cache src.RingBuffer
+	Refresh_queue chan src.Result[[]src.Video]
+
+	// Follow screen
 	Follow_selection uint16
 	Follow_videos []src.Video
-	Refresh_queue chan src.Result[[]src.Video]
 
 	Message string
 }
 
+func set_len[T any](slice []T, target_len int) []T {
+	if len(slice) == target_len {
+		return slice
+	}
+
+	if target_len <= cap(slice) {
+		var uinit T
+		for i := len(slice); i < target_len; i += 1 {
+			slice = append(slice, uinit)
+		}
+		return slice[:target_len]
+	} else {
+		ret := make([]T, target_len)
+		copy(ret, slice)
+		return ret
+	}
+}
+
 // @TODO: Cater for reloading a channel list when there are lines in CACHE.Latest
-func (self *UIState) Load_follow_list(config string, cache *src.RingBuffer) {
+func (self *UIState) Load_config(config string) {
 	list := strings.Split(config, "\n")
-	idx := 0
+	count := 0
 	// filter out empty string and trim "\r"
 	for _, x := range list {
 		s, _ := strings.CutSuffix(x, "\r")
 		if "" != s {
-			list[idx] = s
-			idx += 1
+			list[count] = s
+			count += 1
 		}
 	}
 
 	// @TODO: Refactor this to work even when we run out of cache
 	//        Maybe this is resolved RingBuffer.Latest
-	src.Assert(idx * src.PAGE_SIZE <= src.RING_QUEUE_SIZE)
+	src.Assert(count * src.PAGE_SIZE <= src.RING_QUEUE_SIZE)
 
-	self.Channel_list = list[:idx]
-	self.Follow_videos = make([]src.Video, idx)
-	for i, channel := range list[:idx] {
+	self.Channel_list = list[:count]
+	self.Follow_videos = set_len(self.Follow_videos, count)
+
+	self.Cache.Buffer = set_len(self.Cache.Buffer, src.RING_QUEUE_SIZE)
+	if self.Cache.Latest == nil {
+		// You typically want 70% fullness for hash maps
+		// Although we wrap around (so we could add up to 2 * RING_QUEUE_SIZE)
+		// before deleting elements, we typically typically are only adding vidoes
+		// 10 at a time, so 1.3 * BUFFER_SIZE would be enough
+		self.Cache.Latest = make(map[string]src.Video, src.RING_QUEUE_SIZE * 2)
+	}
+
+	for i, channel := range list[:count] {
 		blank := src.Video{
 			Channel: channel,
 			Title: "Pending...",
 		}
 		self.Follow_videos[i] = blank
-		cache.Latest[channel] = blank
+		self.Cache.Latest[channel] = blank
 	}
 }
 
