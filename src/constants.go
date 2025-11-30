@@ -29,3 +29,32 @@ type Video struct {
 	Is_live       bool
 	Url           string
 }
+
+func Sort_videos_by_latest(a, b Video) int {
+	less_than := false
+	if a.Is_live && b.Is_live {
+		// Shortest live first
+		less_than = a.Duration < b.Duration
+	} else if a.Is_live || b.Is_live {
+		less_than = a.Is_live // Live first, vod after
+	} else {
+		a_close := a.Start_time.Add(a.Duration)
+		b_close := b.Start_time.Add(b.Duration)
+		// Latest close time first
+		less_than = a_close.After(b_close)
+	}
+	if less_than {
+		return -1
+	} else {
+		return 0
+	}
+}
+
+
+//func Is_start_time_before(a, b Video) int {
+//	if a.Start_time.Before(b.Start_time) {
+//		return -1
+//	} else {
+//		return 0
+//	}
+//}

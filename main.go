@@ -141,7 +141,7 @@ func main() {
 			UI.Follow_videos[idx] = vid
 			idx += 1
 		}
-		slices.SortFunc(UI.Follow_videos, tui.Sort_videos_by_latest)
+		slices.SortFunc(UI.Follow_videos, src.Sort_videos_by_latest)
 
 		choice, err := basic_menu(
 			"Follow list\n",
@@ -182,7 +182,7 @@ func main() {
 				}
 			}
 		}
-		slices.SortFunc(UI.Cache.Buffer[UI.Cache.Start:UI.Cache.Close], tui.Sort_videos_by_latest)
+		slices.SortFunc(UI.Cache.Buffer[UI.Cache.Start:UI.Cache.Close], src.Sort_videos_by_latest)
 
 		buffer_length := len(UI.Cache.Buffer)
 		choice, err := basic_menu(

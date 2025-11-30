@@ -32,7 +32,7 @@ type UIState struct {
 	// Channel screen
 	Channel string
 	Channel_selection uint16
-	Channel_videos []src.Video
+	Channel_videos RingBuffer
 
 	Message string
 }
@@ -74,7 +74,7 @@ func (self *UIState) Load_config(config string) {
 
 	self.Channel_list = list[:count]
 	self.Follow_videos = set_len(self.Follow_videos, count)
-	self.Channel_videos = set_len(self.Channel_videos, count)
+	self.Channel_videos.Buffer = set_len(self.Channel_videos.Buffer, count)
 
 	self.Cache.Buffer = set_len(self.Cache.Buffer, src.RING_QUEUE_SIZE)
 	if self.Follow_latest == nil {
@@ -91,30 +91,9 @@ func (self *UIState) Load_config(config string) {
 			Title: "Pending...",
 		}
 		self.Follow_videos[i] = blank
-		self.Channel_videos[i] = blank
 
 		// @VOLATILE: Add_and_update_follow depends on this
 		self.Follow_latest[channel] = blank
-	}
-}
-
-func Sort_videos_by_latest(a, b src.Video) int {
-	less_than := false
-	if a.Is_live && b.Is_live {
-		// Shortest live first
-		less_than = a.Duration < b.Duration
-	} else if a.Is_live || b.Is_live {
-		less_than = a.Is_live // Live first, vod after
-	} else {
-		a_close := a.Start_time.Add(a.Duration)
-		b_close := b.Start_time.Add(b.Duration)
-		// Latest close time first
-		less_than = a_close.After(b_close)
-	}
-	if less_than {
-		return -1
-	} else {
-		return 0
 	}
 }
 
@@ -293,6 +272,9 @@ func (self *RingBuffer) Add(videos []src.Video) {
 	//	}
 	//}
 	for _, vid := range videos {
+		// @VOLATILE: Channel_videos requires added batches to be internally sorted. This is sorted at network ingress
+		src.Assert(past.Start_time == vid.Start_time || past.Start_time.Before(vid.Start_time))
+
 		//if _, ok := self.Latest[vid.Url]; ok {
 		//	continue
 		//} else {

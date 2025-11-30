@@ -171,7 +171,7 @@ func (self *UIState) Interactive() {
 			} else {
 				self.Add_and_update_follow(videos)
 			}
-			slices.SortFunc(self.Follow_videos, Sort_videos_by_latest)
+			slices.SortFunc(self.Follow_videos, src.Sort_videos_by_latest)
 
 			switch (self.Screen) {
 			case ScreenFollow: self.follow_swap()
@@ -237,7 +237,7 @@ func (self *UIState) follow_swap() {
 		self.Follow_videos[idx] = vid
 		idx += 1
 	}
-	slices.SortFunc(self.Follow_videos, Sort_videos_by_latest)
+	slices.SortFunc(self.Follow_videos, src.Sort_videos_by_latest)
 }
 
 func (self *UIState) follow_input(event term.Event, cancel context.CancelFunc) bool {
@@ -289,8 +289,10 @@ func (self UIState) follow_render(writer *bufio.Writer) {
 	}
 	render_video_list(writer, self.Follow_selection, to_render)
 
-	fmt.Fprintf(writer, "\rui_selection: %d", self.Follow_selection)
-	fmt.Fprintf(writer, "\n\r%s", self.Message)
+	fmt.Fprintf(writer, "\r\n (q)uit (r)efresh (hjkl) navigate")
+	fmt.Fprintf(writer, "\r\n")
+	fmt.Fprintf(writer, "\r\nui_selection: %d", self.Follow_selection)
+	fmt.Fprintf(writer, "\r\n%s", self.Message)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -300,18 +302,13 @@ func (self *UIState) channel_swap(channel string) {
 	self.Screen = ScreenChannel
 	self.Channel = channel
 
-	var idx uint = 0
+	// @VOLATILE: Depends on self.Cache being sorted (per channel) from old to newest
 	for _, vid := range self.Cache.As_slice() {
 		if vid.Channel == self.Channel {
-			self.Channel_videos[idx] = vid
-			idx += 1
-		}
-		if int(idx) >= self.Height - 2 || int(idx) >= len(self.Channel_videos) {
-			break
+			self.Channel_videos.Add([]src.Video{vid})
 		}
 	}
-	slices.SortFunc(self.Channel_videos, Sort_videos_by_latest)
-
+	slices.SortFunc(self.Channel_videos.As_slice(), src.Sort_videos_by_latest)
 }
 
 func (self UIState) channel_render(writer *bufio.Writer) {
@@ -319,14 +316,16 @@ func (self UIState) channel_render(writer *bufio.Writer) {
 	fmt.Fprintf(writer, "Channel %s\n", self.Channel)
 	height_left -= 1
 
-	to_render := self.Channel_videos
+	to_render := self.Channel_videos.As_slice()
 	if len(to_render) < height_left - 2 {
 		to_render = to_render[:len(to_render)]
 	}
 	render_video_list(writer, self.Channel_selection, to_render)
 
-	fmt.Fprintf(writer, "\rui_selection: %d", self.Channel_selection)
-	fmt.Fprintf(writer, "\n\r%s", self.Message)
+	fmt.Fprintf(writer, "\r\n (q)uit (r)efresh (hjkl) navigate")
+	fmt.Fprintf(writer, "\r\n")
+	fmt.Fprintf(writer, "\r\nui_selection: %d", self.Channel_selection)
+	fmt.Fprintf(writer, "\r\n%s", self.Message)
 }
 
 func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) bool {
@@ -356,7 +355,7 @@ func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) 
 			self.Screen = ScreenFollow
 
 		case 'j':
-			if int(self.Channel_selection) + 1 < len(self.Channel_videos) {
+			if int(self.Channel_selection) + 1 < len(self.Channel_videos.Buffer) {
 				self.Channel_selection += 1
 			}
 		case 'k':
@@ -364,19 +363,21 @@ func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) 
 				self.Channel_selection -= 1
 			}
 		case 'l':
-			if len(self.Channel_videos) > 0 {
+			if len(self.Channel_videos.Buffer) > 0 {
 				ctx, cancel := context.WithCancel(context.Background())
-				vid := self.Channel_videos[self.Channel_selection]
-				go streamlink(ctx, "https://www.twitch.tv/" + vid.Channel)
+				vid := self.Channel_videos.Buffer[self.Channel_selection]
+				self.Message = vid.Url
+				go streamlink(ctx, vid.Url)
 				_ = cancel
 			}
 		case '0','1','2','3','4','5','6','7','8','9':
 
 		default:
-			self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+			self.Message = self.Channel_videos.Buffer[self.Channel_selection].Url
 		}
 	default:
 		self.Message = fmt.Sprintf("%d %+v", event.Ty, event)
+		self.Message = self.Channel_videos.Buffer[self.Channel_selection].Url
 	}
 	return false
 }
