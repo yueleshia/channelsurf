@@ -19,8 +19,6 @@ import (
 
 //run: go run ../../main.go
 
-var STDIN_FD int
-
 func streamlink(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, "streamlink", args...)
 
@@ -88,7 +86,9 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 	// Setup
 	writer := bufio.NewWriter(os.Stdout)
 	
-	if w, h, err := xterm.GetSize(STDIN_FD); err != nil {
+	stdin_fd := int(os.Stdin.Fd())
+
+	if w, h, err := xterm.GetSize(stdin_fd); err != nil {
 		return
 	} else {
 		self.Width = w
@@ -101,14 +101,14 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 	//events := make(chan term.Event, 1000)
 
 	var old_state *xterm.State
-	if st, err := xterm.MakeRaw(STDIN_FD); err != nil {
+	if st, err := xterm.MakeRaw(stdin_fd); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot enter term raw mode and thus cannot use the TUI-mode. Use this as a CLI. Type --help for more information.")
 		return
 	} else {
 		old_state = st
 	}
 	defer func () {
-		err := xterm.Restore(STDIN_FD, old_state)
+		err := xterm.Restore(stdin_fd, old_state)
 		_ = err
 	}()
 	_ = src.Must(writer.WriteString(term.Enter_alt_buffer + "\x1B[1;1H" + term.Hide_cursor))
@@ -118,7 +118,7 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 	}()
 
 	//// Busy loop if set to non-blocking
-	//if err := term.Sys_set_nonblock(STDIN_FD, true); err != nil {
+	//if err := term.Sys_set_nonblock(stdin_fd, true); err != nil {
 	//	return
 	//}
 
@@ -141,7 +141,7 @@ func (self *UIState) Interactive(cache *src.RingBuffer) {
 		var buffer [32]byte
 		for {
 			var parser term.InputParser
-			if n, err := term.Sys_read(STDIN_FD, buffer[:]); err != nil || n < 1 {
+			if n, err := term.Sys_read(stdin_fd, buffer[:]); err != nil || n < 1 {
 				continue
 			} else {
 				parser = buffer[:n]
@@ -243,7 +243,7 @@ func (self *UIState) screen_follow_input(event term.Event, cancel context.Cancel
 			self.refresh_channels(self.Channel_list...)
 			
 		case 'j':
-			if int(self.Follow_selection) < len(self.Follow_videos) {
+			if int(self.Follow_selection) + 1 < len(self.Follow_videos) {
 				self.Follow_selection += 1
 			}
 		case 'k':
