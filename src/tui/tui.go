@@ -290,6 +290,7 @@ func (self UIState) follow_render(writer *bufio.Writer) {
 func (self *UIState) channel_swap(channel string) {
 	self.Screen = ScreenChannel
 	self.Channel = channel
+	self.Channel_command = self.Channel_command[:0]
 
 	// @VOLATILE: Depends on self.Cache being sorted (per channel) from old to newest
 	for _, vid := range self.Cache.As_slice() {
@@ -328,22 +329,41 @@ func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) 
 
 		case 'j':
 			if int(self.Channel_selection) + 1 < len(self.Channel_videos.Buffer) {
+				self.Channel_command = self.Channel_command[:0] // Clear time selection
 				self.Channel_selection += 1
 			}
 		case 'k':
 			if self.Channel_selection > 0 {
+				self.Channel_command = self.Channel_command[:0] // Clear time selection
 				self.Channel_selection -= 1
 			}
 		case 'l':
 			if len(self.Channel_videos.Buffer) > 0 {
 				ctx, cancel := context.WithCancel(context.Background())
 				vid := self.Channel_videos.Buffer[self.Channel_selection]
-				_, _ = self.Message.WriteString(vid.Url)
-				_ = self.Message.WriteByte('\n')
-				go streamlink(ctx, self.Log_queue, vid.Url)
+
+				if vid.Is_live || len(self.Channel_command) == 0 {
+					_, _ = self.Message.WriteString(fmt.Sprintf("Playing %s\n", vid.Url))
+					go streamlink(ctx, self.Log_queue, vid.Url)
+				} else {
+					_, _ = self.Message.WriteString(fmt.Sprintf("Playing %s at %s\n", vid.Url, self.Channel_command))
+					go streamlink(ctx, self.Log_queue, vid.Url, "--hls-start-offset", string(self.Channel_command))
+				}
+				// @TODO: Track if video is currently playing, and close it if we reopen. Maybe this is undesired behaviour?
 				_ = cancel
 			}
-		case '0','1','2','3','4','5','6','7','8','9':
+		case '0','1','2','3','4','5','6','7','8','9', ':':
+			vid := self.Channel_videos.Buffer[self.Channel_selection]
+
+			if !vid.Is_live {
+				self.Channel_command = append(self.Channel_command, byte(event.X))
+			}
+
+		case 127:
+			length := len(self.Channel_command)
+			if length > 0 {
+				self.Channel_command = self.Channel_command[:length - 1]
+			}
 
 		default:
 			_, _ = self.Message.WriteString(self.Channel_videos.Buffer[self.Channel_selection].Url)
@@ -368,6 +388,14 @@ func (self UIState) channel_render(writer *bufio.Writer) {
 	}
 	render_video_list(writer, self.Channel_selection, to_render)
 
+	// Display play time
+	{
+		vid := self.Channel_videos.Buffer[self.Channel_selection]
+		// On live videos hide this selection, because you will be on live
+		if !vid.Is_live && len(self.Channel_command) > 0 {
+			fmt.Fprintf(writer, "\r\n Length (hh:mm:ss): %s\r\n", string(self.Channel_command))
+		}
+	}
 	fmt.Fprintf(writer, "\r\n (q)uit (r)efresh (hjkl) navigate")
 	fmt.Fprintf(writer, "\r\n")
 	fmt.Fprintf(writer, "\r\nui_selection: %d", self.Channel_selection)

@@ -34,6 +34,7 @@ type UIState struct {
 	Channel string
 	Channel_selection uint16
 	Channel_videos RingBuffer
+	Channel_command []byte
 
 	Message strings.Builder
 }
@@ -76,9 +77,11 @@ func (self *UIState) Load_config(config string) {
 	self.Refresh_queue = make(chan src.Result[[]src.Video], 100)
 	self.Log_queue = make(chan []byte, 100)
 
-	self.Channel_list = list[:count]
 	self.Follow_videos = set_len(self.Follow_videos, count)
+
+	self.Channel_list = list[:count]
 	self.Channel_videos.Buffer = set_len(self.Channel_videos.Buffer, count)
+	self.Channel_command = set_len(self.Channel_command, 100)
 
 	self.Cache.Buffer = set_len(self.Cache.Buffer, src.RING_QUEUE_SIZE)
 	if self.Follow_latest == nil {
