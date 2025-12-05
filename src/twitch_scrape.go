@@ -67,19 +67,19 @@ func read_twitch_frontend_packet(input io.ReadCloser) ([]byte, error) {
 
 
 // You probably have to run this several times since it stochastically curls nothing
-func Scrape_vods(channel string) Result[[]Video] {
+func Scrape_vods(channel string) VideoPacket {
 	Assert(strings.Index(channel, "/") == -1)
 	videos := [10]Video{}
 
 	body, err := Request(context.TODO(), "GET", nil, nil, "https://twitch.tv/" + channel + "/videos", fmt.Sprintf("scrape-%s-videos", channel))
 	
 	if err != nil {
-		return Result[[]Video]{videos[:0], err}
+		return VideoPacket{nil, false, err}
 	}
 	ret, err := func () ([]Video, error) {
 		var live_data []byte
 		if x, err := read_twitch_frontend_packet(body); err != nil {
-			return videos[:0], err
+			return nil, err
 
 		} else {
 			live_data = x
@@ -109,26 +109,33 @@ func Scrape_vods(channel string) Result[[]Video] {
 		}
 
 		idx := 0
-		var x1 GraphQL
+		var step1 GraphQL
 		{
 			dec := json.NewDecoder(bytes.NewBuffer(live_data))
 			dec.DisallowUnknownFields()
-			if err := dec.Decode(&x1); err != nil {
-				return videos[:0], err
+			if err := dec.Decode(&step1); err != nil {
+				return nil, err
 			}
 		}
 
-		var x2 ItemList
+		var step2 ItemList
 		{
-			dec := json.NewDecoder(bytes.NewBuffer(x1.Graph[1]))
-			dec.DisallowUnknownFields()
-			if err := dec.Decode(&x2); err != nil {
+			var err error = nil
+			for _, x := range step1.Graph {
+				dec := json.NewDecoder(bytes.NewBuffer(x))
+				dec.DisallowUnknownFields()
+				err = dec.Decode(&step2)
+				if err == nil {
+					break
+				}
+			}
+			if err != nil {
 				return videos[:0], err
 			}
 		}
 		// Reverse so that our QUEUE overwrites older VODs
-		for i := len(x2.Item_list_element) - 1; i >= 0; i -= 1 {
-			x := x2.Item_list_element[i]
+		for i := len(step2.Item_list_element) - 1; i >= 0; i -= 1 {
+			x := step2.Item_list_element[i]
 			var start, close time.Time
 
 			if parsed_url, err := url.Parse(x.Url); err != nil {
@@ -160,7 +167,6 @@ func Scrape_vods(channel string) Result[[]Video] {
 			videos[idx] = Video {
 				Title: x.Name,
 				Channel: channel,
-				Description: x.Description,
 				Thumbnail_URL: x.Thumbnail_URL,
 				Start_time: start,
 				Duration: close.Sub(start),
@@ -175,29 +181,32 @@ func Scrape_vods(channel string) Result[[]Video] {
 		}
 		return videos[:idx], nil
 	}()
-	if err != nil {
-		return Result[[]Video]{videos[:0], err}
+	if err := body.Close(); err != nil {
+		return VideoPacket{nil, false, err}
 	}
-	return Result[[]Video]{ret, body.Close()}
+	return VideoPacket{ret, false, err}
 }
 
 
 
-func Scrape_live_status(channel string) Result[[]Video] {
+func Scrape_live_status(channel string) VideoPacket {
 	Assert(strings.Index(channel, "/") == -1)
+	offline_vid := Video {
+		Channel: channel,
+	}
 
 	channel_url := "https://twitch.tv/" + channel
 	body, err := Request(context.TODO(), "GET", nil, nil, channel_url, fmt.Sprintf("scrape-%s", channel))
 	if err != nil {
-		return Result[[]Video]{[]Video{}, err}
+		return VideoPacket{[]Video{offline_vid}, true, err}
 	}
 	ret, err := func () (Video, error) {
 		var live_data []byte
 		if x, err := read_twitch_frontend_packet(body); err != nil {
 			if _, ok := err.(ErrMissing); ok {
-				return Video{}, ErrMissing { message: channel + " is not live" }
+				return offline_vid, ErrMissing { message: channel + " is not live" }
 			} else {
-				return Video{}, err
+				return offline_vid, err
 			}
 		} else {
 			live_data = x
@@ -229,7 +238,7 @@ func Scrape_live_status(channel string) Result[[]Video] {
 		dec := json.NewDecoder(bytes.NewBuffer(live_data))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&x); err != nil {
-			return Video{}, err
+			return offline_vid, err
 		}
 		//fmt.Println(x)
 
@@ -238,19 +247,18 @@ func Scrape_live_status(channel string) Result[[]Video] {
 		var start, close time.Time
 		//"2025-11-12T15:06:12Z"
 		if x, err := time.Parse(time.RFC3339, node.Publication.Start_date); err != nil {
-			return Video{}, err
+			return offline_vid, err
 		} else {
 			start = x
 		}
 		if x, err := time.Parse(time.RFC3339, node.Publication.End_date); err != nil {
-			return Video{}, err
+			return offline_vid, err
 		} else {
 			close = x
 		}
 		return Video{
 			Title: node.Description,
 			Channel: channel,
-			Description: node.Name,
 			Thumbnail_URL: node.Thumbnail_URL,
 			Start_time: start,
 			Duration: close.Sub(start),
@@ -259,8 +267,8 @@ func Scrape_live_status(channel string) Result[[]Video] {
 			Chapters: []Chapter{},
 		}, nil
 	}()
-	if err != nil {
-		return Result[[]Video]{[]Video{}, err}
+	if err := body.Close(); err != nil {
+		return VideoPacket{[]Video{offline_vid}, true, err}
 	}
-	return Result[[]Video]{[]Video{ret}, body.Close()}
+	return VideoPacket{[]Video{ret}, true, err}
 }

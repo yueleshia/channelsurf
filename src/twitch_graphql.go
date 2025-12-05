@@ -16,9 +16,10 @@ import (
 
 // in grayjay, see getChannelPager
 // I've added game Moments
-var VODS_GRAPHQL_QUERY = strings.ReplaceAll(`query FilterableVideoTower_Videos($channelOwnerLogin: String!, $limit: Int, $cursor: Cursor, $broadcastType: BroadcastType, $videoSort: VideoSort, $options: VideoConnectionOptionsInput) {
+var VODS_GRAPHQL_QUERY = strings.ReplaceAll(`query videos($channelOwnerLogin: String!, $limit: Int, $cursor: Cursor, $broadcastType: BroadcastType, $videoSort: VideoSort, $options: VideoConnectionOptionsInput) {
     user(login: $channelOwnerLogin) {
         id
+
         videos(first: $limit, after: $cursor, type: $broadcastType, sort: $videoSort, options: $options) {
             edges {
                 cursor
@@ -55,9 +56,19 @@ var VODS_GRAPHQL_QUERY = strings.ReplaceAll(`query FilterableVideoTower_Videos($
                 hasNextPage
             }
         }
+
+        stream {
+            createdAt
+        }
+        broadcastSettings {
+            game {
+                name
+            }
+            title
+        }
     }
 }`, "\n", "")
-func Graph_vods(channel string) Result[[]Video] {
+func Graph_vods(channel string) (VideoPacket, Video) {
 	// url format https://www.twitch.tv/qtcinderella/videos?filter=all&sort=time (query params may or may not be there)
 	variables := strings.Join([]string{
 		`{`,
@@ -70,7 +81,7 @@ func Graph_vods(channel string) Result[[]Video] {
 	}, "")
 	query := strings.Join([]string{
 		"[{",
-		`"operationName": "FilterableVideoTower_Videos",`,
+		`"operationName": "videos",`,
 		`"variables":` + variables + `,`,
 		`"query":"` + VODS_GRAPHQL_QUERY + `"`,
 		"}]",
@@ -90,12 +101,15 @@ func Graph_vods(channel string) Result[[]Video] {
 			//"Device-ID": void 0,
 		}, strings.NewReader(query), "https://gql.twitch.tv/gql#origin=twilight", fmt.Sprintf("graph-%s-videos", channel))
 		if err != nil {
-			return Result[[]Video]{videos[:0], err}
+			return VideoPacket{videos[:0], false, err}, Video{}
 		}
 		request = x
 	}
 
-	ret, err := func() ([]Video, error) {
+	ret, live_vid, err := func() ([]Video, Video, error) {
+		live_video := Video {
+			Channel: channel,
+		}
 		type VideoNode struct {
 			Typename       string `json:"__typename"`
 			Id             string `json:"id"`
@@ -123,12 +137,13 @@ func Graph_vods(channel string) Result[[]Video] {
 					Has_next_page bool `json:"hasNextPage"`
 				} `json:"pageInfo"`
 			} `json:"moments"`
+
 		}
 		type VideoEdge struct {
 			Cursor string    `json:"cursor"`
 			Node   VideoNode `json:"node"`
 		}
-		type FilterableVideoTower_Videos struct {
+		type Query struct {
 			Data struct {
 				User struct {
 					Id string `json:"id"`
@@ -138,6 +153,17 @@ func Graph_vods(channel string) Result[[]Video] {
 							Has_next_page bool `json:"hasNextPage"`
 						} `json:"pageInfo"`
 					} `json:"videos"`
+
+					// Related to live status
+					Stream *struct {
+						Created_at string `json:"createdAt"`
+					} `json:"stream"`
+					Broadcast_settings struct {
+						Game struct {
+							Name string `json:"name"`
+						} `json:"game"`
+						Title string `json:"title"`
+					} `json:"broadcastSettings"`
 				} `json:"user"`
 			} `json:"data"`
 			Extensions struct {
@@ -148,11 +174,11 @@ func Graph_vods(channel string) Result[[]Video] {
 			} `json:"extensions"`
 		}
 
-		var unmarshalled []FilterableVideoTower_Videos
+		var unmarshalled []Query
 		dec := json.NewDecoder(request)
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&unmarshalled); err != nil {
-			return videos[:0], err
+			return videos[:0], Video{}, err
 		}
 
 		video_edges := unmarshalled[0].Data.User.Videos.Edges
@@ -166,7 +192,7 @@ func Graph_vods(channel string) Result[[]Video] {
 
 			var start time.Time
 			if x, err := time.Parse(time.RFC3339, x.Published_at); err != nil {
-				return videos[:0], err
+				return videos[:0], Video{}, err
 			} else {
 				start = x
 			}
@@ -187,7 +213,6 @@ func Graph_vods(channel string) Result[[]Video] {
 			videos[idx] = Video {
 				Title: x.Title,
 				Channel: channel,
-				Description: "",
 				Thumbnail_URL: []string{x.Thumbnail_URL},
 				Start_time: start,
 				Duration: time.Duration(x.Length_seconds) * time.Second,
@@ -198,10 +223,32 @@ func Graph_vods(channel string) Result[[]Video] {
 			idx += 1
 		}
 
-		return videos[:idx], nil
+		// Is live
+		if unmarshalled[0].Data.User.Stream != nil {
+			user := unmarshalled[0].Data.User
+			var start time.Time
+			if x, err := time.Parse(time.RFC3339, user.Stream.Created_at); err != nil {
+				return videos[:0], live_video, err
+			} else {
+				start = x
+			}
+
+			live_video = Video{
+				Title: user.Broadcast_settings.Title,
+				Channel: channel,
+				Thumbnail_URL: []string{},
+				Start_time: start,
+				Duration: time.Now().Sub(start),
+				Is_live: true,
+				Url: "https://www.twitch.tv/" + channel,
+				Chapters: []Chapter{Chapter{user.Broadcast_settings.Game.Name, 0}},
+			}
+		}
+
+		return videos[:idx], live_video, nil
 	}()
 	if err != nil {
-		return Result[[]Video]{videos[:0], err}
+		return VideoPacket{videos[:0], false, err}, live_vid
 	}
-	return Result[[]Video]{ret, request.Close()}
+	return VideoPacket{ret, false, request.Close()}, live_vid
 }

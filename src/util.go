@@ -34,11 +34,6 @@ func Run(input io.Reader, output io.Writer, name string, arg ...string) error {
 	return nil
 }
 
-type Result[T any] struct {
-	Val T
-	Err error
-}
-
 func Is_similar_time(a, b time.Time) bool {
 	delta := a.Sub(b)
 	return -5 * time.Minute < delta && delta < 5 * time.Minute

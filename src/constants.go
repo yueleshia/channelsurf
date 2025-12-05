@@ -19,6 +19,12 @@ const ANSI_FG_GREEN = "\x1b[32m"
 const ANSI_FG_CYAN = "\x1b[36m"
 const ANSI_RESET = "\x1b[0m"
 
+type VideoPacket struct {
+	Vids []Video
+	Live bool
+	Err  error
+}
+
 type Chapter struct {
 	Name     string
 	Position time.Duration
@@ -27,7 +33,6 @@ type Chapter struct {
 type Video struct {
 	Title         string
 	Channel       string
-	Description   string
 	Thumbnail_URL []string
 	Start_time    time.Time
 	Duration      time.Duration

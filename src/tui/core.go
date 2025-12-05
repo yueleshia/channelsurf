@@ -16,17 +16,22 @@ const (
 	ScreenChannel
 )
 
+type FollowPair struct {
+	Live   src.Video
+	Latest src.Video
+}
+
 type UIState struct {
 	Height, Width int
 	Screen int
 	Channel_list []string
 
 	Cache LRU
-	Refresh_queue chan src.Result[[]src.Video]
+	Refresh_queue chan src.VideoPacket
 	Log_queue chan []byte
 
 	// Follow screen
-	Follow_latest map[string]src.Video
+	Follow_latest map[string]FollowPair
 	Follow_selection uint16
 	Follow_videos []src.Video
 
@@ -74,7 +79,7 @@ func (self *UIState) Load_config(config string) {
 	//        Maybe this is resolved RingBuffer.Latest
 	src.Assert(count * src.PAGE_SIZE <= src.RING_QUEUE_SIZE)
 
-	self.Refresh_queue = make(chan src.Result[[]src.Video], 100)
+	self.Refresh_queue = make(chan src.VideoPacket, 100)
 	self.Log_queue = make(chan []byte, 100)
 
 	self.Follow_videos = set_len(self.Follow_videos, count)
@@ -92,29 +97,47 @@ func (self *UIState) Load_config(config string) {
 		self.Cache.Exists = make(map[string]int, src.RING_QUEUE_SIZE * 2)
 	}
 	if self.Follow_latest == nil {
-		self.Follow_latest = make(map[string]src.Video, count * 2)
+		self.Follow_latest = make(map[string]FollowPair, count * 2)
 	}
 
 	for i, channel := range list[:count] {
 		blank := src.Video{
 			Channel: channel,
-			Title: "Pending...",
 		}
 		self.Follow_videos[i] = blank
 
 		// @VOLATILE: Add_and_update_follow depends on this
-		self.Follow_latest[channel] = blank
+		self.Follow_latest[channel] = FollowPair{blank, blank}
+	}
+}
+
+const PACKETS_PER_REFRESH = 2
+
+func Refresh_channels(queue chan src.VideoPacket, channels ...string) {
+	for _, channel := range channels {
+		go func() {
+			vods, live := src.Graph_vods(channel)
+			if live.Is_live {
+				src.L_DEBUG.Printf("%s is live", live.Channel)
+			}
+			queue <- vods
+			queue <- src.VideoPacket{[]src.Video{live}, true, nil}
+		}()
+		//go func() { queue <- src.Scrape_vods(channel) }()
+		//go func() { queue <- src.Scrape_live_status(channel) }()
 	}
 }
 
 func Print_formatted_line(output io.Writer, gap string, video src.Video) {
 	sizes := []int{10, 30, 9, 6}
 
-	var s_ago, duration string
+	var s_ago, title, duration string
 	t_ago := time.Now().Sub(video.Start_time)
 
 	if video.Start_time == (time.Time{}) {
+		title = "Pending..."
 	} else {
+		title = video.Title
 		if video.Is_live {
 			s_ago = "○"
 			duration = fmt.Sprintf("%dh%02dm", int(t_ago.Hours()), int(t_ago.Minutes()) % 60)
@@ -132,7 +155,7 @@ func Print_formatted_line(output io.Writer, gap string, video src.Video) {
 		}
 	}
 
-	print_line(output, gap, sizes, []string{video.Channel, video.Title, s_ago, duration})
+	print_line(output, gap, sizes, []string{video.Channel, title, s_ago, duration})
 }
 func print_line(output io.Writer, gap string, sizes []int, cols []string) error {
 	if len(sizes) != len(cols) {
@@ -239,24 +262,35 @@ func is_ASCII(s string) bool {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func (self *UIState) Add_and_update_follow(videos []src.Video) {
-	for _, vid := range videos {
-		self.Cache.Push(vid)
-		// If one of the channels we follow
+// Live packets are only stored in self.Follow_latest, not in the Cache.
+func (self *UIState) Add_and_update_follow(packet src.VideoPacket) {
+	if packet.Live {
+		src.Assert(len(packet.Vids) == 1)
+		vid := packet.Vids[0]
 		if las, ok := self.Follow_latest[vid.Channel]; ok {
-			vid_close_time := vid.Start_time.Add(vid.Duration)
-			las_close_time := las.Start_time.Add(las.Duration)
+			self.Follow_latest[vid.Channel] = FollowPair{vid, las.Latest}
+		}
+	} else {
+		for _, vid := range packet.Vids {
+			self.Cache.Push(vid)
 
-			if vid.Is_live {
-				self.Follow_latest[vid.Channel] = vid
-			} else if src.Is_similar_time(vid.Start_time, las.Start_time) {
-				vid.Is_live = las.Is_live
-				self.Follow_latest[vid.Channel] = vid
-			} else if vid_close_time.After(las_close_time) {
-				self.Follow_latest[vid.Channel] = vid
+			// If one of the channels we follow
+			if pair, ok := self.Follow_latest[vid.Channel]; ok {
+				las := pair.Latest
+				vid_close_time := vid.Start_time.Add(vid.Duration)
+				las_close_time := las.Start_time.Add(las.Duration)
+
+				if src.Is_similar_time(vid.Start_time, las.Start_time) {
+					vid.Is_live = las.Is_live
+					pair.Latest = vid
+				} else if vid_close_time.After(las_close_time) {
+					pair.Latest = vid
+				}
+				self.Follow_latest[vid.Channel] = pair
 			}
 		}
 	}
+
 }
 
 

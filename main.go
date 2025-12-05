@@ -10,8 +10,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
-	//"time"
 	"os"
 
 	"github.com/yueleshia/streamsurf/src"
@@ -78,24 +76,7 @@ func main() {
 			return
 		}
 
-		{
-			jobs := []func (string) src.Result[[]src.Video]{
-				src.Graph_vods,
-				src.Scrape_live_status,
-			}
-			vid_chan := make(chan src.Result[[]src.Video], len(jobs))
-			for _, job := range jobs {
-				go func() { vid_chan <- job(channel) }()
-			}
-			for i := 0; i < len(jobs); i += 1 {
-				x := <-vid_chan
-				if videos, err := x.Val, x.Err; err != nil {
-					fmt.Fprintln(os.Stderr, err.Error())
-				} else {
-					UI.Add_and_update_follow(videos)
-				}
-			}
-		}
+		sync_refresh(channel)
 
 		cur := src.Video{}
 		buffer_length := len(UI.Cache.Buffer)
@@ -110,35 +91,17 @@ func main() {
 
 	case "f": fallthrough
 	case "follow":
-		var wg sync.WaitGroup
-		wg.Add(len(UI.Channel_list))
+		sync_refresh(UI.Channel_list...)
 
-		{
-			jobs := []func (string) src.Result[[]src.Video]{
-				src.Graph_vods,
-				src.Scrape_live_status,
+		// @VOLATILE: Load_config seeds the keys
+		var idx uint = 0
+		for _, pair := range UI.Follow_latest {
+			fmt.Println(pair)
+			if pair.Live.Duration > 0 {
+				UI.Follow_videos[idx] = pair.Live
+			} else {
+				UI.Follow_videos[idx] = pair.Latest
 			}
-			job_count := len(jobs) * len(UI.Channel_list)
-
-			vid_chan := make(chan src.Result[[]src.Video], job_count)
-			for _, channel := range UI.Channel_list {
-				for _, job := range jobs {
-					go func() { vid_chan <- job(channel) }()
-				}
-			}
-			for i := 0; i < job_count; i += 1 {
-				x := <-vid_chan
-				if videos, err := x.Val, x.Err; err != nil {
-					fmt.Fprintln(os.Stderr, err.Error())
-				} else {
-					UI.Add_and_update_follow(videos)
-				}
-			}
-		}
-
-		idx := 0
-		for _, vid := range UI.Follow_latest {
-			UI.Follow_videos[idx] = vid
 			idx += 1
 		}
 		slices.SortFunc(UI.Follow_videos, src.Sort_videos_by_latest)
@@ -164,33 +127,22 @@ func main() {
 			os.Exit(1)
 		}
 		channel := os.Args[2]
-		{
-			jobs := []func (string) src.Result[[]src.Video]{
-				src.Graph_vods,
-				src.Scrape_live_status,
-			}
-			vid_chan := make(chan src.Result[[]src.Video], len(jobs))
-			for _, job := range jobs {
-				go func() { vid_chan <- job(channel) }()
-			}
-			for i := 0; i < len(jobs); i += 1 {
-				x := <-vid_chan
-				if videos, err := x.Val, x.Err; err != nil {
-					fmt.Fprintln(os.Stderr, err.Error())
-				} else {
-					UI.Add_and_update_follow(videos)
-				}
-			}
+
+		sync_refresh(channel)
+		if pair, ok := UI.Follow_latest[channel]; ok && pair.Live.Duration > 0 {
+			UI.Cache.Push(pair.Live)
 		}
 		slices.SortFunc(UI.Cache.Buffer[UI.Cache.Start:UI.Cache.Close], src.Sort_videos_by_latest)
 
 		buffer_length := len(UI.Cache.Buffer)
+		ring_length := UI.Cache.Close - UI.Cache.Start
 		choice, err := basic_menu(
 			fmt.Sprintf("VODs for %s\n", channel),
-			UI.Cache.Close - UI.Cache.Start,
+			ring_length,
 			"Enter a Video: ",
 			func (out io.Writer, idx int) {
-				vid := UI.Cache.Buffer[(UI.Cache.Close - idx - 1) % buffer_length]
+				reversed_idx := ring_length - ((UI.Cache.Close - idx) % buffer_length)
+				vid := UI.Cache.Buffer[reversed_idx]
 				tui.Print_formatted_line(out, " | ", vid)
 			},
 		)
@@ -202,15 +154,21 @@ func main() {
 		vid := UI.Cache.Buffer[(UI.Cache.Close - choice - 1) % buffer_length]
 		play(vid)
 
-		//var list strings.Builder
-		//buffer_length := len(UI.Cache.Buffer)
-		//for i := UI.Cache.Start; i < UI.Cache.Close; i += 1 {
-		//	vid := UI.Cache.Buffer[i % buffer_length]
-		//	tui.Print_formatted_line(&list, " | ", vid)
-		//}
-
 	default:
 		fmt.Fprintf(os.Stderr, "Unsupported command %q\n", cmd)
+	}
+}
+
+func sync_refresh(channels ...string) {
+	job_count := len(channels) * tui.PACKETS_PER_REFRESH
+	vid_chan := make(chan src.VideoPacket, job_count)
+	tui.Refresh_channels(vid_chan, channels...)
+	for i := 0; i < job_count; i += 1 {
+		if packet := <-vid_chan; packet.Err != nil {
+			fmt.Fprintln(os.Stderr, packet.Err.Error())
+		} else {
+			UI.Add_and_update_follow(packet)
+		}
 	}
 }
 

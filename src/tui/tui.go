@@ -106,8 +106,8 @@ func (self *UIState) Interactive() {
 	src.Must1(writer.Flush())
 
 	refresh_queue := make(chan bool, 100)
-	self.Refresh_queue = make(chan src.Result[[]src.Video], 100)
-	self.refresh_channels(self.Channel_list...)
+	self.Refresh_queue = make(chan src.VideoPacket, 100)
+	Refresh_channels(self.Refresh_queue, self.Channel_list...)
 
 	// Setup input loop
 	// We do not want tob lock the main loop, so that we can have async updates
@@ -146,12 +146,15 @@ func (self *UIState) Interactive() {
 			fmt.Println("hello")
 			_, _ = self.Message.Write(message)
 
-		case x := <-self.Refresh_queue:
-			if videos, err := x.Val, x.Err; err != nil {
-				_, _ = self.Message.WriteString(err.Error())
+		case packet := <-self.Refresh_queue:
+			if packet.Err != nil {
+				_, _ = self.Message.WriteString(packet.Err.Error())
 				_ = self.Message.WriteByte('\n')
 			} else {
-				self.Add_and_update_follow(videos)
+				self.Add_and_update_follow(packet)
+				if self.Message.String() != "Refreshed\n" {
+					_, _  = self.Message.WriteString("Refreshed\n")
+				}
 			}
 			slices.SortFunc(self.Follow_videos, src.Sort_videos_by_latest)
 
@@ -160,7 +163,6 @@ func (self *UIState) Interactive() {
 			case ScreenChannel: self.channel_swap(self.Channel)
 			default: panic("DEV: Unsupport screen")
 			}
-
 
 		case event := <- input_queue:
 			is_break := false
@@ -176,12 +178,6 @@ func (self *UIState) Interactive() {
 		}
 
 		render(writer, *self)
-	}
-}
-func (self *UIState) refresh_channels(channels ...string) {
-	for _, channel := range channels {
-		go func() { self.Refresh_queue <- src.Graph_vods(channel) }()
-		go func() { self.Refresh_queue <- src.Scrape_live_status(channel) }()
 	}
 }
 
@@ -220,9 +216,14 @@ func render_message(writer *bufio.Writer, message string) {
 func (self *UIState) follow_swap() {
 	self.Screen = ScreenFollow
 
+	// @VOLATILE: Load_config seeds the keys
 	var idx uint = 0
-	for _, vid := range self.Follow_latest {
-		self.Follow_videos[idx] = vid
+	for _, pair := range self.Follow_latest {
+		if pair.Live.Duration > 0 {
+			self.Follow_videos[idx] = pair.Live
+		} else {
+			self.Follow_videos[idx] = pair.Latest
+		}
 		idx += 1
 	}
 	slices.SortFunc(self.Follow_videos, src.Sort_videos_by_latest)
@@ -243,7 +244,7 @@ func (self *UIState) follow_input(event term.Event, cancel context.CancelFunc) b
 			return true
 
 		case 'r':
-			self.refresh_channels(self.Channel_list...)
+			Refresh_channels(self.Refresh_queue, self.Channel_list...)
 			
 		case 'j':
 			if int(self.Follow_selection) + 1 < len(self.Follow_videos) {
@@ -293,6 +294,9 @@ func (self *UIState) channel_swap(channel string) {
 	self.Channel_command = self.Channel_command[:0]
 
 	self.Channel_videos.Clear()
+	if pair, ok := self.Follow_latest[channel]; ok && pair.Live.Duration > 0 {
+		self.Channel_videos.Push(pair.Live)
+	}
 	for _, vid := range self.Cache.As_slice() {
 		if vid.Channel == self.Channel {
 			self.Channel_videos.Push(vid)
@@ -316,7 +320,7 @@ func (self *UIState) channel_input(event term.Event, cancel context.CancelFunc) 
 			return true
 
 		case 'r':
-			self.refresh_channels(self.Channel)
+			Refresh_channels(self.Refresh_queue, self.Channel)
 			
 		case 'h':
 			for i, vid := range self.Follow_videos {
