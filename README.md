@@ -2,7 +2,26 @@ This is a local-first Terminal User Interface for Twitch.
 Maybe YouTube as well, but let's not get our hopes up.
 
 This works based off of streamlink.
-I will most likely rewrite this to zig once the Async rework has landed.
+The zig rewite is in progress,
+
+Currently the UI looks like the following:
+
+```
+Follow
+sphaero... | A fetch() api that doesn't ... | 17 hr ago | 1h51m
+j_blow     | Berries (with fried rice br... | 33 hr ago | 4h00m
+tsoding    | Game Dev in C — Debug Console  | 3 d ago   | 2h30m
+vedal987   | evil? yeah. you know it.       | 4 d ago   | 2h21m
+kristof... | Awebo - OSS Discord alterna... | 5 d ago   | 6h16m
+jonhoo     | Pending...                     |           |
+wookash... | Pending...                     |           |
+andrewrok  | Pending...                     |           |
+fengb      | Pending...                     |           |
+
+ (q)uit (r)efresh (hjkl) navigate
+
+ui_selection: 0
+```
 
 You can see a stripped-down version of scraping in example.sh
 
